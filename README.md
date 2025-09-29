@@ -1,6 +1,6 @@
 # Hono in Bun
 
-这是一个使用 Bun、Hono 和 TypeScript 构建的高性能 Web 后端项目模板。它集成了 OpenAPI (Swagger) 文档、日志记录、中间件和结构化的路由。
+这是一个使用 Bun、Hono 和 TypeScript 构建的 Web 后端项目模板。它集成了 OpenAPI (Scalar UI) 文档、日志记录、中间件和结构化的路由。
 
 ## 技术栈
 
