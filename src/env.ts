@@ -6,7 +6,7 @@ import { expand } from 'dotenv-expand';
 import { z } from 'zod';
 
 const MAX_PORT = 33_899;
-const DEFAULT_PORT = 3001;
+const DEFAULT_PORT = 3002;
 
 // 导入环境变量
 expand(

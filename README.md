@@ -58,10 +58,10 @@
     bun run dev
     ```
 
-    服务器将在 `http://localhost:3000` 启动，并支持热重载。
+    服务器将在 `http://localhost:3002` 启动，并支持热重载。
 
 3.  **API 文档**
-    访问 `http://localhost:3000/doc` 查看由 Scalar 生成的 API 文档。
+    访问 `http://localhost:3002/reference` 查看由 Scalar 生成的 API 文档。
 
 ## 数据库集成 (PostgreSQL 示例)
 
