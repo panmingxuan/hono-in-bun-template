@@ -1,6 +1,7 @@
 {
   "name": "hono-in-bun",
   "version": "1.0.0",
+  "license": "MIT",
   "scripts": {
     "dev": "bun run --hot src/server.ts"
   },
