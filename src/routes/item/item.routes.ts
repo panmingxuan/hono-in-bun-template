@@ -1,41 +1,22 @@
 import { createRoute, z } from '@hono/zod-openapi';
 // biome-ignore lint/performance/noNamespaceImport: <explanation>
 import * as HttpStatusCodes from 'stoker/http-status-codes';
-import { jsonContent } from 'stoker/openapi/helpers';
-import type { z as z4 } from 'zod/v4';
+import { jsonContent, jsonContentRequired } from 'stoker/openapi/helpers';
+import { insertItemSchema, selectItemSchema } from '@/db/schema';
 
-export type ItmeScheme = {
-  id: string;
-  name: string;
-  payload: string;
-  sort: number;
-};
+export const respErr = z
+  .object({
+    message: z.string().describe('错误信息'),
+  })
+  .describe('错误响应');
 
-const item: ItmeScheme[] = [
-  {
-    id: '1',
-    name: 'test1',
-    payload: '111111',
-    sort: 1,
-  },
-  {
-    id: '2',
-    name: 'test1',
-    payload: '222222',
-    sort: 2,
-  },
-  {
-    id: '3',
-    name: 'test1',
-    payload: '33333',
-    sort: 3,
-  },
-];
+// type RespErr = z.infer<typeof respErr>;
 
 const routePrefix = '/item';
 
 const tags = [`${routePrefix} (物料)`];
 
+/** 查询物料列表 */
 export const list = createRoute({
   summary: '获取物料列表',
   path: routePrefix,
@@ -43,10 +24,38 @@ export const list = createRoute({
   tags,
   responses: {
     [HttpStatusCodes.OK]: jsonContent(
-      z.array(item[0] as unknown as z.ZodType<z4.infer<ItmeScheme>>),
+      z.array(selectItemSchema),
       '一个物料列表'
+    ),
+    [HttpStatusCodes.UNPROCESSABLE_ENTITY]: jsonContent(
+      respErr,
+      '查询参数验证错误'
+    ),
+    [HttpStatusCodes.INTERNAL_SERVER_ERROR]: jsonContent(
+      respErr,
+      '服务器内部错误'
     ),
   },
 });
 
+/** 新增新的物料 */
+export const create = createRoute({
+  summary: '新增物料',
+  path: routePrefix,
+  method: 'post',
+  tags,
+  request: {
+    body: jsonContentRequired(insertItemSchema, '创建好的物料'),
+  },
+  responses: {
+    [HttpStatusCodes.OK]: jsonContent(selectItemSchema, '新增物料成功'),
+    [HttpStatusCodes.UNPROCESSABLE_ENTITY]: jsonContent(
+      respErr,
+      '数据校验失败'
+    ),
+    [HttpStatusCodes.CONFLICT]: jsonContent(respErr, 'sort已存在'),
+  },
+});
+
 export type ListRoute = typeof list;
+export type CreateRoute = typeof create;

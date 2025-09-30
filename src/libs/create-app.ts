@@ -16,8 +16,8 @@ export default function createApp() {
   const app = createRouter();
   app
     .use(requestId())
-    .use('*', requstLogger)
-    .use(serveEmojiFavicon('📝'))
+    // .use('*', requstLogger)
+    .use(serveEmojiFavicon('🔥'))
     .use('*', setHeaders);
   app.onError(onError);
   app.notFound(notFound);

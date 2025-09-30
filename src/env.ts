@@ -29,6 +29,8 @@ const EnvSchema = z.object({
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
+  // 数据库链接
+  DATABASE_URL: z.string('数据库链接不能为空！'),
   // 服务名称
   APP_NAME: z.string().default('Hono App'),
   JWT_SECRET: z.string(),

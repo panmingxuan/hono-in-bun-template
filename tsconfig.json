@@ -25,6 +25,5 @@
     "noPropertyAccessFromIndexSignature": false,
     "strictNullChecks": true
   },
-  "include": ["src", "scripts", "index.ts"],
-  "exclude": ["node_modules", "build", "dist"]
+  "exclude": ["node_modules", "build", "dist", "bun.lock"]
 }
