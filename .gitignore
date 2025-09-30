@@ -1,2 +1,7 @@
 # deps
 node_modules/
+
+# dev file
+.env.development
+.env.production
+.env.test
