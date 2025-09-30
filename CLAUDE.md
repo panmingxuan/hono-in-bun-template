@@ -1,189 +1,190 @@
-# AI 协作指南：API 层开发规范
+# AI 协作指南：唯一范式与落地实践（以 item 模块为准）
 
-本文档为 AI 提供了在本 Hono 项目中如何高效、规范地创建 API 接口的详细指南。请严格遵循以下约定和步骤。
+本文档要求 AI 在本项目中的一切 API 与数据库开发，严格以现有示例为唯一范式：
 
-## 核心理念
+- 路由与处理器范式：参考 `./src/routes/item` 下的真实代码
+  - 契约定义：`./src/routes/item/item.routes.ts`
+  - 处理实现：`./src/routes/item/itme.handlers.ts`
+  - 模块装配：`./src/routes/item/index.ts`
+- 数据库与 Schema 范式：参考 `./src/db/schema/item` 下的真实代码
+  - 表与 Zod：`./src/db/schema/item/item.ts`
+  - Schema 汇总：`./src/db/schema/index.ts`
+  - 应用 Schema 前缀：`./src/db/schema/app-schema.ts`
 
-API 开发遵循“关注点分离”原则，将路由定义、业务逻辑和模块组装拆分到不同的文件中。每个 API 模块（例如 `item`）都包含三个核心文件：
+请不要从零杜撰风格或随意更改目录/命名。对齐上述文件的风格、导入路径、注释与错误处理模式。
 
-1.  `*.routes.ts`: **路由契约层**。定义 API 的所有元数据，包括路径、HTTP 方法、参数、请求体、响应格式以及 OpenAPI 文档信息。此文件**不包含**任何业务逻辑。
-2.  `*.handlers.ts`: **业务逻辑层**。实现路由的具体功能。它接收请求上下文 (`ctx`)，执行操作，并返回响应。
-3.  `index.ts`: **模块组装层**。将路由定义和业务逻辑处理器连接起来，并导出 Hono 实例。
+## 路由契约：严格使用 @hono/zod-openapi（照抄 item.routes.ts 模式）
 
-以 `item` 模块为例，我们来看看这三个文件如何协同工作。
+关键要点：
 
-## 1. `item.routes.ts` - 定义路由契约
+- 使用 `createRoute` 定义 path、method、tags、request、responses
+- 错误响应统一复用 `respErr`，HTTP 状态码来源 `stoker/http-status-codes`
+- 请求/响应体使用 `jsonContent`/`jsonContentRequired` 包装 Zod Schema
+- 路径前缀以模块名为准（item 使用 `/item`）
 
-此文件的核心职责是使用 `@hono/zod-openapi` 的 `createRoute` 函数来定义一个或多个路由。
+新增路由示例（缩减版，按需替换 Schema 与描述）：
 
-```typescript
-// src/routes/item/item.routes.ts
-
+```ts
 import { createRoute, z } from "@hono/zod-openapi";
 import * as HttpStatusCodes from "stoker/http-status-codes";
-import { jsonContent } from "stoker/openapi/helpers";
+import { jsonContent, jsonContentRequired } from "stoker/openapi/helpers";
+import { insertItemSchema, selectItemSchema } from "@/db/schema";
 
-// 1. 定义数据结构 Schema (如果需要)
-// 使用 Zod 定义清晰的数据类型，用于请求和响应。
-const ItemSchema = z.object({
-  id: z.string().openapi({ example: "1" }),
-  name: z.string().openapi({ example: "Sample Item" }),
-  // ... 其他字段
-});
+export const respErr = z.object({ message: z.string() }).describe("错误响应");
+const routePrefix = "/item";
+const tags = [`${routePrefix} (物料)`];
 
-// 2. 定义路由
 export const list = createRoute({
-  // OpenAPI 元数据
   summary: "获取物料列表",
-  description: "返回所有可用的物料。",
-  tags: ["Item"],
-
-  // 路由核心定义
+  path: routePrefix,
   method: "get",
-  path: "/items", // 建议使用复数形式
-
-  // 定义响应格式
+  tags,
   responses: {
     [HttpStatusCodes.OK]: jsonContent(
-      z.array(ItemSchema), // 使用 Zod Schema
-      "成功获取物料列表"
+      z.array(selectItemSchema),
+      "一个物料列表"
+    ),
+    [HttpStatusCodes.UNPROCESSABLE_ENTITY]: jsonContent(
+      respErr,
+      "查询参数验证错误"
     ),
     [HttpStatusCodes.INTERNAL_SERVER_ERROR]: jsonContent(
-      z.object({ message: z.string() }),
+      respErr,
       "服务器内部错误"
     ),
   },
 });
 
-// 3. 导出路由类型，供 handler 使用
+export const create = createRoute({
+  summary: "新增物料",
+  path: routePrefix,
+  method: "post",
+  tags,
+  request: { body: jsonContentRequired(insertItemSchema, "创建好的物料") },
+  responses: {
+    [HttpStatusCodes.OK]: jsonContent(selectItemSchema, "新增物料成功"),
+    [HttpStatusCodes.UNPROCESSABLE_ENTITY]: jsonContent(
+      respErr,
+      "数据校验失败"
+    ),
+    [HttpStatusCodes.CONFLICT]: jsonContent(respErr, "sort已存在"),
+  },
+});
+
 export type ListRoute = typeof list;
+export type CreateRoute = typeof create;
 ```
 
-**关键点**:
+## 处理实现：保持最小职责与类型安全（照抄 itme.handlers.ts 模式）
 
-- **只定义，不实现**：此文件是纯声明式的。
-- **强类型**：使用 Zod 为所有输入和输出定义严格的 Schema。这不仅能提供自动验证，还能生成准确的 OpenAPI 文档。
-- **OpenAPI 文档**：`summary`, `description`, `tags` 等字段会自动用于生成 `/doc` 页面。
-- **导出类型**：导出路由的类型 (`typeof list`)，以便在 `handlers.ts` 中获得类型提示。
+关键要点：
 
-## 2. `itme.handlers.ts` - 实现业务逻辑
+- `RouteHandler` 泛型约束返回值与 `ctx.req.valid()` 请求体验证
+- 所有数据库操作通过 `@/db` 的默认导出访问
+- 成功统一返回 200/OK，错误返回对应的 OpenAPI 声明状态
 
-此文件负责实现 `*.routes.ts` 中定义的路由的逻辑。
+示例：
 
-```typescript
-// src/routes/item/itme.handlers.ts
-
+```ts
 import type { RouteConfig, RouteHandler } from "@hono/zod-openapi";
-// 1. 导入在 .routes.ts 中定义的路由类型
-import type { ListRoute } from "./item.routes";
-import { db } from "@/db"; // 假设已配置数据库
+import * as HttpStatusCodes from "stoker/http-status-codes";
+import db from "@/db";
+import { items } from "@/db/schema";
+import type { CreateRoute, ListRoute } from "./item.routes";
 
-// 2. 定义一个通用的 Handler 类型 (可选，但推荐)
 export type AppRouteHandler<R extends RouteConfig> = RouteHandler<R>;
 
-// 3. 实现业务逻辑
 export const list: AppRouteHandler<ListRoute> = async (ctx) => {
-  try {
-    // 示例：从数据库查询数据
-    const items = await db.query.items.findMany();
-    return ctx.json(items);
-  } catch (error) {
-    // 记录错误
-    ctx.get("logger").error(error);
-    // 返回一个标准化的错误响应
-    return ctx.json({ message: "Failed to fetch items" }, 500);
-  }
+  const itemList = await db.query.items.findMany();
+  return ctx.json(itemList, HttpStatusCodes.OK);
+};
+
+export const create: AppRouteHandler<CreateRoute> = async (ctx) => {
+  const item = ctx.req.valid("json");
+  const [inserted] = await db.insert(items).values(item).returning();
+  return ctx.json(inserted, HttpStatusCodes.OK);
 };
 ```
 
-**关键点**:
+## 模块装配：仅负责绑定（照抄 routes/item/index.ts 模式）
 
-- **类型安全**：通过 `AppRouteHandler<ListRoute>`，`list` 函数的 `ctx.json()` 会自动检查返回值是否符合 `ListRoute` 中定义的响应 Schema。
-- **依赖注入**：通过 `ctx.get('...')` 获取共享的实例，如 `logger`。
-- **错误处理**：实现健壮的 `try...catch` 块，记录错误并返回符合 Schema 的错误响应。
-- **保持精简**：如果逻辑变得复杂，应将其拆分到服务层 (`src/services/`)。Handler 只做数据转换和流程控制。
-
-## 3. `index.ts` - 组装模块
-
-这是将路由和处理器“粘合”在一起的地方。
-
-```typescript
-// src/routes/item/index.ts
-
-/** biome-ignore-all lint/performance/noNamespaceImport: <explanation> */
+```ts
 import { OpenAPIHono } from "@hono/zod-openapi";
-// 1. 导入所有路由定义和处理器
 import * as routes from "./item.routes";
 import * as handlers from "./itme.handlers";
 
-// 2. 创建一个新的 Hono 实例
-const router = new OpenAPIHono();
+const router = new OpenAPIHono()
+  .openapi(routes.list, handlers.list)
+  .openapi(routes.create, handlers.create);
 
-// 3. 将路由和处理器绑定
-// .openapi(routeDefinition, handlerFunction)
-router.openapi(routes.list, handlers.list);
-// 如果有更多路由，继续绑定
-// router.openapi(routes.create, handlers.create);
-// router.openapi(routes.getById, handlers.getById);
-
-// 4. 导出 router
 export default router;
 ```
 
-**关键点**:
+## 数据库范式：以 src/db/schema/item 为唯一模板
 
-- **单一职责**：此文件的唯一职责就是组装。
-- **清晰映射**：`router.openapi(route, handler)` 的调用清晰地展示了哪个路由定义由哪个处理器实现。
+关键要点：
 
-## 4. `src/app.ts` - 挂载新模块
+- 统一使用 `app` schema：`pgSchema('hono-app')`
+- 表创建统一放置在 `src/db/schema/<module>/<table>.ts`
+- 使用 `drizzle-zod` 派生 select/insert/update Zod Schema，并为 OpenAPI 添加描述
+- 主键优先使用 `uuid().defaultRandom()`；若使用需确保启用 `pgcrypto`
 
-最后一步是将新创建的 API 模块挂载到主应用上。
+示例片段：
 
-```typescript
-// src/app.ts
+```ts
+import { integer, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import {
+  createInsertSchema,
+  createSelectSchema,
+  createUpdateSchema,
+} from "drizzle-zod";
+import { z } from "zod";
+import { app } from "../app-schema";
 
-import { configureOpenApi } from "@/libs/config-open-api";
-import createApp from "./libs/create-app";
+export const items = app.table("item", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: varchar({ length: 64 }).notNull(),
+  payload: text(),
+  sort: integer("sort").unique(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
 
-// 1. 导入新创建的路由模块
-import item from "@/routes/item";
-import user from "@/routes/user"; // 假设你创建了一个新的 user 模块
-
-const app = createApp();
-
-configureOpenApi(app);
-
-// 2. 将新模块添加到路由数组中
-const routes = [item, user];
-
-// 3. 循环挂载
-for (const route of routes) {
-  app.route("/", route);
-}
-
-export default app;
+export const selectItemSchema = createSelectSchema(items);
+export const insertItemSchema = createInsertSchema(items).omit({
+  id: true,
+  createdAt: true,
+});
+export const updateItemSchema = createUpdateSchema(items).pick({
+  name: true,
+  payload: true,
+  sort: true,
+});
+export const deleteItemSchema = z.object({ id: z.uuid() });
 ```
 
-## 创建新 API 模块的完整流程
+## 迁移与目录：以 drizzle.config.ts 为准
 
-假设要创建一个新的 `product` 模块。
+- 迁移配置位于 `./drizzle.config.ts`，输出目录固定为 `./drizzle/migrations`
+- 初次克隆后先执行：
 
-1.  **创建文件夹**: 在 `src/routes/` 下创建 `product` 文件夹。
-2.  **创建 `product.routes.ts`**:
-    - 定义 `ProductSchema`。
-    - 使用 `createRoute` 定义 `listProducts`、`createProduct` 等路由。
-    - 导出所有路由定义和它们的类型。
-3.  **创建 `product.handlers.ts`**:
-    - 导入 `product.routes.ts` 中的路由类型。
-    - 为每个路由实现业务逻辑处理器 (`listProducts`, `createProduct` 等)。
-    - 处理数据库交互和错误。
-4.  **创建 `index.ts`**:
-    - 导入 `product.routes.ts` 和 `product.handlers.ts`。
-    - 创建一个 `OpenAPIHono` 实例。
-    - 使用 `.openapi()` 将路由和处理器绑定。
-    - 导出 `router`。
-5.  **更新 `src/app.ts`**:
-    - 导入 ` '@/routes/product'`。
-    - 将其添加到 `routes` 数组中。
+```bash
+bun run db:generate
+bun run db:migrate
+```
 
-遵循此模式，AI 可以轻松理解项目结构并独立、规范地添加新的 API 功能。
+若缺少目录，可手动创建：
+
+```bash
+mkdir -p drizzle/migrations
+```
+
+## 禁止事项
+
+- 不要使用与 `item` 模块不一致的路由装配方式
+- 不要越过 `@/db` 直接创建数据库连接
+- 不要在 handler 内堆积复杂业务，提取到独立服务文件再调用
+- 不要绕过 Zod/OpenAPI 契约直接返回任意 JSON
+
+遵循以上唯一范式，AI 生成的增量改动将与项目保持一致、可维护且可被 OpenAPI 正确描述。
