@@ -1,190 +1,134 @@
-# AI 协作指南：唯一范式与落地实践（以 item 模块为准）
+# AI 协作开发原则：架构一致性与模块自治指南
 
-本文档要求 AI 在本项目中的一切 API 与数据库开发，严格以现有示例为唯一范式：
+本文件将原有的硬性“唯一范式”约束，转化为以 **SOLID 原则**、**可维护架构思想** 为基础的 **设计指导准则**。  
+目标是在保持一致性的前提下，允许 AI 与开发者以“原则驱动”方式进行模块扩展与迭代。
 
-- 路由与处理器范式：参考 `./src/routes/item` 下的真实代码
-  - 契约定义：`./src/routes/item/item.routes.ts`
-  - 处理实现：`./src/routes/item/itme.handlers.ts`
-  - 模块装配：`./src/routes/item/index.ts`
-- 数据库与 Schema 范式：参考 `./src/db/schema/item` 下的真实代码
-  - 表与 Zod：`./src/db/schema/item/item.ts`
-  - Schema 汇总：`./src/db/schema/index.ts`
-  - 应用 Schema 前缀：`./src/db/schema/app-schema.ts`
+---
 
-请不要从零杜撰风格或随意更改目录/命名。对齐上述文件的风格、导入路径、注释与错误处理模式。
+## 一、模块自治原则（Single Responsibility Principle）
 
-## 路由契约：严格使用 @hono/zod-openapi（照抄 item.routes.ts 模式）
+> 每个模块应承担清晰且单一的业务职责，内部逻辑分层且边界明确。
 
-关键要点：
+**设计目标**
 
-- 使用 `createRoute` 定义 path、method、tags、request、responses
-- 错误响应统一复用 `respErr`，HTTP 状态码来源 `stoker/http-status-codes`
-- 请求/响应体使用 `jsonContent`/`jsonContentRequired` 包装 Zod Schema
-- 路径前缀以模块名为准（item 使用 `/item`）
+- 降低耦合、提升可读性与可维护性。
+- 确保路由契约、处理实现、数据库定义彼此独立但协作一致。
 
-新增路由示例（缩减版，按需替换 Schema 与描述）：
+**实践方式**
 
-```ts
-import { createRoute, z } from "@hono/zod-openapi";
-import * as HttpStatusCodes from "stoker/http-status-codes";
-import { jsonContent, jsonContentRequired } from "stoker/openapi/helpers";
-import { insertItemSchema, selectItemSchema } from "@/db/schema";
+- 路由定义、Handler 实现、Schema 定义三者独立成层。
+- 模块对外只暴露 router，不应混杂数据层逻辑。
+- `item` 模块是结构与职责边界的参考实现。
 
-export const respErr = z.object({ message: z.string() }).describe("错误响应");
-const routePrefix = "/item";
-const tags = [`${routePrefix} (物料)`];
+---
 
-export const list = createRoute({
-  summary: "获取物料列表",
-  path: routePrefix,
-  method: "get",
-  tags,
-  responses: {
-    [HttpStatusCodes.OK]: jsonContent(
-      z.array(selectItemSchema),
-      "一个物料列表"
-    ),
-    [HttpStatusCodes.UNPROCESSABLE_ENTITY]: jsonContent(
-      respErr,
-      "查询参数验证错误"
-    ),
-    [HttpStatusCodes.INTERNAL_SERVER_ERROR]: jsonContent(
-      respErr,
-      "服务器内部错误"
-    ),
-  },
-});
+## 二、契约优先原则（Interface Segregation Principle）
 
-export const create = createRoute({
-  summary: "新增物料",
-  path: routePrefix,
-  method: "post",
-  tags,
-  request: { body: jsonContentRequired(insertItemSchema, "创建好的物料") },
-  responses: {
-    [HttpStatusCodes.OK]: jsonContent(selectItemSchema, "新增物料成功"),
-    [HttpStatusCodes.UNPROCESSABLE_ENTITY]: jsonContent(
-      respErr,
-      "数据校验失败"
-    ),
-    [HttpStatusCodes.CONFLICT]: jsonContent(respErr, "sort已存在"),
-  },
-});
+> 所有接口交互以“契约（Contract）”为核心，契约是类型安全与行为一致的基础。
 
-export type ListRoute = typeof list;
-export type CreateRoute = typeof create;
-```
+**设计目标**
 
-## 处理实现：保持最小职责与类型安全（照抄 itme.handlers.ts 模式）
+- 强化 API 自描述能力。
+- 让验证、文档与实现保持同构。
 
-关键要点：
+**实践方式**
 
-- `RouteHandler` 泛型约束返回值与 `ctx.req.valid()` 请求体验证
-- 所有数据库操作通过 `@/db` 的默认导出访问
-- 成功统一返回 200/OK，错误返回对应的 OpenAPI 声明状态
+- 使用 `@hono/zod-openapi` 定义 API 契约。
+- 每个请求与响应结构应通过 Zod Schema 显式声明。
+- 错误与成功响应均以 Schema 表达，而非自由 JSON。
 
-示例：
+**示例要点**
 
-```ts
-import type { RouteConfig, RouteHandler } from "@hono/zod-openapi";
-import * as HttpStatusCodes from "stoker/http-status-codes";
-import db from "@/db";
-import { items } from "@/db/schema";
-import type { CreateRoute, ListRoute } from "./item.routes";
+- 路由声明使用 `createRoute`。
+- 响应体使用 `jsonContent` / `jsonContentRequired`。
+- 错误结构复用 `respErr`，状态码来源统一自 `stoker/http-status-codes`。
 
-export type AppRouteHandler<R extends RouteConfig> = RouteHandler<R>;
+---
 
-export const list: AppRouteHandler<ListRoute> = async (ctx) => {
-  const itemList = await db.query.items.findMany();
-  return ctx.json(itemList, HttpStatusCodes.OK);
-};
+## 三、依赖隔离原则（Dependency Inversion Principle）
 
-export const create: AppRouteHandler<CreateRoute> = async (ctx) => {
-  const item = ctx.req.valid("json");
-  const [inserted] = await db.insert(items).values(item).returning();
-  return ctx.json(inserted, HttpStatusCodes.OK);
-};
-```
+> 访问外部资源（数据库、API）时，应通过统一封装层实现，而非直接依赖底层细节。
 
-## 模块装配：仅负责绑定（照抄 routes/item/index.ts 模式）
+**设计目标**
 
-```ts
-import { OpenAPIHono } from "@hono/zod-openapi";
-import * as routes from "./item.routes";
-import * as handlers from "./itme.handlers";
+- 解耦业务逻辑与基础设施实现。
+- 保证模块迁移与测试的可控性。
 
-const router = new OpenAPIHono()
-  .openapi(routes.list, handlers.list)
-  .openapi(routes.create, handlers.create);
+**实践方式**
 
-export default router;
-```
+- 所有数据库操作通过 `@/db` 暴露的默认实例访问。
+- 禁止在 handler 内部直接创建连接或实例化外部依赖。
+- 模块装配通过统一 `index.ts` 进行注册与导出。
 
-## 数据库范式：以 src/db/schema/item 为唯一模板
+---
 
-关键要点：
+## 四、显式错误与响应原则（Open/Closed Principle）
 
-- 统一使用 `app` schema：`pgSchema('hono-app')`
-- 表创建统一放置在 `src/db/schema/<module>/<table>.ts`
-- 使用 `drizzle-zod` 派生 select/insert/update Zod Schema，并为 OpenAPI 添加描述
-- 主键优先使用 `uuid().defaultRandom()`；若使用需确保启用 `pgcrypto`
+> 所有可能的响应状态与错误类型都应在设计阶段明确定义。
 
-示例片段：
+**设计目标**
 
-```ts
-import { integer, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
-import {
-  createInsertSchema,
-  createSelectSchema,
-  createUpdateSchema,
-} from "drizzle-zod";
-import { z } from "zod";
-import { app } from "../app-schema";
+- 避免意料之外的返回结构。
+- 增强 OpenAPI 的准确性与可测试性。
 
-export const items = app.table("item", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: varchar({ length: 64 }).notNull(),
-  payload: text(),
-  sort: integer("sort").unique(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+**实践方式**
 
-export const selectItemSchema = createSelectSchema(items);
-export const insertItemSchema = createInsertSchema(items).omit({
-  id: true,
-  createdAt: true,
-});
-export const updateItemSchema = createUpdateSchema(items).pick({
-  name: true,
-  payload: true,
-  sort: true,
-});
-export const deleteItemSchema = z.object({ id: z.uuid() });
-```
+- 响应结构、错误结构、状态码均在契约层声明。
+- 遵循「定义即行为」：声明的结构即实现返回的结构。
+- 所有未定义错误一律视为 `INTERNAL_SERVER_ERROR`。
 
-## 迁移与目录：以 drizzle.config.ts 为准
+---
 
-- 迁移配置位于 `./drizzle.config.ts`，输出目录固定为 `./drizzle/migrations`
-- 初次克隆后先执行：
+## 五、结构一致性原则（Consistency Principle）
 
-```bash
-bun run db:generate
-bun run db:migrate
-```
+> 模块的目录结构、文件命名与导入路径应保持统一，以利协作与 AI 自动生成。
 
-若缺少目录，可手动创建：
+**设计目标**
 
-```bash
-mkdir -p drizzle/migrations
-```
+- 让每个模块可通过相同范式扩展。
+- 降低上下文切换与风格偏移。
 
-## 禁止事项
+**实践方式**
 
-- 不要使用与 `item` 模块不一致的路由装配方式
-- 不要越过 `@/db` 直接创建数据库连接
-- 不要在 handler 内堆积复杂业务，提取到独立服务文件再调用
-- 不要绕过 Zod/OpenAPI 契约直接返回任意 JSON
+- 目录层级：`routes/<module>`, `db/schema/<module>`。
+- 文件命名：`<module>.routes.ts`, `<module>.handlers.ts`, `index.ts`。
+- Schema 命名统一为 `selectXxxSchema`, `insertXxxSchema`, `updateXxxSchema`。
 
-遵循以上唯一范式，AI 生成的增量改动将与项目保持一致、可维护且可被 OpenAPI 正确描述。
+---
+
+## 六、最小可变原则（Liskov Substitution Principle）
+
+> 优先通过替换 Schema、扩展契约来创建新功能，而非复制与重写。
+
+**设计目标**
+
+- 复用已有的模式与类型体系。
+- 保持行为一致的同时，允许语义层扩展。
+
+**实践方式**
+
+- 新模块可基于现有 CRUD 模板实现扩展。
+- 仅修改 Schema、路径与描述部分，不破坏整体结构。
+- 所有派生逻辑应可被既有类型安全机制覆盖。
+
+---
+
+## 七、迁移透明原则（Infrastructure Isolation Principle）
+
+> 数据库结构演进必须可追溯、可回滚。任何迁移都应通过统一工具生成。
+
+**设计目标**
+
+- 确保团队协作中数据库状态一致。
+- 保持历史版本的可恢复性。
+
+**实践方式**
+
+- 使用 `drizzle.config.ts` 管理迁移配置。
+- 迁移输出目录固定为 `./drizzle/migrations`。
+- 不允许执行手写 SQL 修改结构。
+- 初始化命令：
+  ```bash
+  bun run db:generate
+  bun run db:migrate
+  ```
